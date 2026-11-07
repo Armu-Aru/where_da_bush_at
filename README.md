@@ -1,51 +1,45 @@
-# Green Coverage ROI App
+# Green Coverage ROI Desktop App
 
-This project measures how much green vegetation is inside a selected region of
-an image. It is a practical image-analysis tool, not an ML training project.
+This Windows desktop app measures green and non-green vegetation inside a
+region selected by the user. It is a practical image-analysis tool, not an ML
+training project.
 
-## Why this was made
+## What it does
 
-Field images contain a PVC frame or another area that needs to be measured.
-The app lets a user draw that area directly, then reports:
+- Opens the images in the `images` folder.
+- Lets you draw an ROI polygon directly on an image.
+- Estimates green and non-green percentages inside that polygon.
+- Applies a conservative correction for small bright leaf reflections.
+- Saves results to an Excel workbook.
 
-- green area as a percentage;
-- non-green area as a percentage.
+## Run it
 
-Bright reflections on leaves are handled conservatively when they are small and
-surrounded by green pixels.
-
-## Run the app
-
-From the project folder:
+From the project folder in PowerShell:
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-streamlit run app.py
+python desktop_app.py
 ```
 
-The app reads images from the [`images`](images) folder.
-To use other images, copy JPG, JPEG, or PNG files into that folder.
+The app opens as a normal desktop window; no browser is required.
 
-## Use the app
+## Use it
 
-1. Select an image.
-2. Draw one polygon around the area to measure.
-3. Click **Analyze ROI**.
-4. Read the green and non-green percentages.
-5. Download the Excel results when needed.
+1. Put JPG, JPEG, or PNG files in the `images` folder.
+2. Select an image from the left-hand list.
+3. Click at least three points around the ROI.
+4. Click **Analyze ROI**.
+5. Read the percentages in the status message.
+6. Repeat for other images.
+7. Click **Export Excel results** when finished.
 
-Results are saved in [`results/roi_results.xlsx`](results/roi_results.xlsx).
-If an image is analyzed again, its previous row is replaced.
+Results are stored in `results/roi_results.xlsx`. Re-analyzing an image
+replaces its previous row. No overlay images are saved.
 
-The colored review overlay is created temporarily during analysis and deleted
-automatically. No overlay files are kept.
+## GitHub
 
-## Project files
-
-- [`app.py`](app.py): Streamlit user interface.
-- [`images`](images): input image folder.
-- [`results`](results): final Excel output.
-- [`run_green_roi_analysis.py`](run_green_roi_analysis.py):
-  reusable green/non-green analysis logic.
+This repository contains the desktop app, the reusable analysis algorithm,
+requirements, README, and sample input images. Large original field datasets
+and generated outputs are intentionally excluded.
