@@ -9,7 +9,15 @@ import cv2
 import numpy as np
 import pandas as pd
 from PySide6.QtCore import QPointF, QTimer, Qt
-from PySide6.QtGui import QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QImage,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -32,7 +40,6 @@ from run_green_roi_analysis import (
 
 
 ROOT = Path(__file__).resolve().parent
-IMAGE_DIR = ROOT / "images"
 DATA_ROOT = ROOT / "Data"
 LEGACY_DATA_ROOTS = {
     "roadside transect": ROOT / "ROADSIDE TRANSECT",
@@ -42,7 +49,7 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
 class ImageCanvas(QLabel):
-    """Display an image and collect a polygon by mouse clicks."""
+    """Display an image and create or edit one ROI polygon."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -54,9 +61,14 @@ class ImageCanvas(QLabel):
         self.points: list[QPointF] = []
         self.scale = 1.0
         self.offset = QPointF()
+        self.mode = "idle"
+        self.finalized = False
+        self.hover_point: QPointF | None = None
+        self.drag_index: int | None = None
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-    def set_image(self, image: np.ndarray) -> None:
+    def set_image(self, image: np.ndarray, clear_points: bool = True) -> None:
         height, width = image.shape[:2]
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         qimage = QImage(
@@ -68,9 +80,74 @@ class ImageCanvas(QLabel):
         ).copy()
         self._pixmap = QPixmap.fromImage(qimage)
         self._image_size = (width, height)
-        self.points.clear()
+        if clear_points:
+            self.points.clear()
+            self.finalized = False
+            self.mode = "idle"
+            self.hover_point = None
         self._update_transform()
         self.update()
+
+    def start_drawing(self) -> None:
+        self.points.clear()
+        self.finalized = False
+        self.mode = "draw"
+        self.hover_point = None
+        self.setFocus()
+        self.update()
+
+    def start_editing(self) -> None:
+        if self.finalized:
+            self.mode = "edit"
+            self.setFocus()
+            self.update()
+
+    def finish_polygon(self) -> bool:
+        if len(self.points) < 3:
+            return False
+        self.finalized = True
+        self.mode = "idle"
+        self.hover_point = None
+        self.drag_index = None
+        self.update()
+        return True
+
+    def cancel_drawing(self) -> None:
+        if not self.finalized:
+            self.points.clear()
+            self.mode = "idle"
+            self.hover_point = None
+            self.update()
+
+    def clear_polygon(self) -> None:
+        self.points.clear()
+        self.finalized = False
+        self.mode = "idle"
+        self.hover_point = None
+        self.drag_index = None
+        self.update()
+
+    def _image_point(self, position: QPointF) -> QPointF | None:
+        if self._pixmap.isNull() or self.scale <= 0:
+            return None
+        x = (position.x() - self.offset.x()) / self.scale
+        y = (position.y() - self.offset.y()) / self.scale
+        if 0 <= x <= self._image_size[0] and 0 <= y <= self._image_size[1]:
+            return QPointF(x, y)
+        return None
+
+    def _display_point(self, point: QPointF) -> QPointF:
+        return QPointF(
+            point.x() * self.scale + self.offset.x(),
+            point.y() * self.scale + self.offset.y(),
+        )
+
+    def _nearest_vertex(self, position: QPointF) -> int | None:
+        display_points = [self._display_point(point) for point in self.points]
+        for index, point in enumerate(display_points):
+            if (point - position).manhattanLength() <= 14:
+                return index
+        return None
 
     def _update_transform(self) -> None:
         if self._pixmap.isNull():
@@ -92,14 +169,44 @@ class ImageCanvas(QLabel):
         super().resizeEvent(event)
 
     def mousePressEvent(self, event) -> None:
-        if event.button() != Qt.MouseButton.LeftButton or self._pixmap.isNull():
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         position = event.position()
-        x = (position.x() - self.offset.x()) / self.scale
-        y = (position.y() - self.offset.y()) / self.scale
-        if 0 <= x <= self._image_size[0] and 0 <= y <= self._image_size[1]:
-            self.points.append(QPointF(x, y))
-            self.update()
+        image_point = self._image_point(position)
+        if image_point is None:
+            return
+        if self.mode == "draw":
+            if (
+                len(self.points) >= 3
+                and (self._display_point(self.points[0]) - position).manhattanLength() <= 14
+            ):
+                self.finish_polygon()
+            else:
+                self.points.append(image_point)
+                self.update()
+        elif self.mode == "edit":
+            self.drag_index = self._nearest_vertex(position)
+
+    def mouseMoveEvent(self, event) -> None:
+        position = event.position()
+        image_point = self._image_point(position)
+        self.hover_point = image_point if self.mode == "draw" else None
+        if self.mode == "edit" and self.drag_index is not None and image_point is not None:
+            self.points[self.drag_index] = image_point
+        self.update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_index = None
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if self.mode == "draw":
+                self.finish_polygon()
+        elif event.key() == Qt.Key.Key_Escape:
+            self.cancel_drawing()
+        else:
+            super().keyPressEvent(event)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -114,22 +221,26 @@ class ImageCanvas(QLabel):
         )
         painter.drawPixmap(self.offset, scaled)
         if self.points:
-            pen = QPen(Qt.GlobalColor.yellow, 3)
+            pen = QPen(
+                Qt.GlobalColor.yellow if not self.finalized else Qt.GlobalColor.green,
+                3,
+            )
             painter.setPen(pen)
-            display_points = [
-                QPointF(
-                    point.x() * self.scale + self.offset.x(),
-                    point.y() * self.scale + self.offset.y(),
-                )
-                for point in self.points
-            ]
+            display_points = [self._display_point(point) for point in self.points]
             for first, second in zip(display_points, display_points[1:]):
                 painter.drawLine(first, second)
-            if len(display_points) > 2:
+            if self.finalized and len(display_points) > 2:
                 painter.drawLine(display_points[-1], display_points[0])
+                painter.setBrush(QBrush(QColor(0, 220, 0, 45)))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawPolygon(QPolygonF(display_points))
             painter.setBrush(Qt.GlobalColor.yellow)
+            painter.setPen(QPen(Qt.GlobalColor.yellow, 2))
             for point in display_points:
                 painter.drawEllipse(point, 5, 5)
+            if self.mode == "draw" and self.hover_point is not None:
+                painter.setPen(QPen(Qt.GlobalColor.yellow, 2))
+                painter.drawLine(display_points[-1], self._display_point(self.hover_point))
 
 
 class MainWindow(QMainWindow):
@@ -149,12 +260,19 @@ class MainWindow(QMainWindow):
         self.folder_selector = QComboBox()
         self.folder_selector.currentIndexChanged.connect(self._select_folder)
         self.image_list = QListWidget()
-        self.image_list.addItems([path.name for path in self.image_paths])
         self.image_list.currentRowChanged.connect(self._select_image)
         self.canvas = ImageCanvas()
 
         self.refresh_button = QPushButton("Refresh folders and images")
         self.refresh_button.clicked.connect(self._refresh_data)
+        self.draw_button = QPushButton("Create polygon")
+        self.draw_button.clicked.connect(self._start_polygon)
+        self.edit_button = QPushButton("Edit polygon")
+        self.edit_button.clicked.connect(self._edit_polygon)
+        self.finish_button = QPushButton("Finish polygon")
+        self.finish_button.clicked.connect(self._finish_polygon)
+        self.cancel_button = QPushButton("Cancel drawing")
+        self.cancel_button.clicked.connect(self._cancel_polygon)
         self.analyze_button = QPushButton("Analyze ROI")
         self.analyze_button.clicked.connect(self._analyze)
         self.clear_button = QPushButton("Clear polygon")
@@ -172,6 +290,10 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.refresh_button)
         controls.addWidget(QLabel("Images"))
         controls.addWidget(self.image_list)
+        controls.addWidget(self.draw_button)
+        controls.addWidget(self.edit_button)
+        controls.addWidget(self.finish_button)
+        controls.addWidget(self.cancel_button)
         controls.addWidget(self.analyze_button)
         controls.addWidget(self.clear_button)
         controls.addWidget(self.export_button)
@@ -190,16 +312,14 @@ class MainWindow(QMainWindow):
         self._refresh_timer.start(2000)
 
     def _available_datasets(self) -> dict[str, Path]:
-        datasets = {"Example images": IMAGE_DIR} if IMAGE_DIR.is_dir() else {}
-        data_datasets: dict[str, Path] = {}
+        datasets: dict[str, Path] = {}
         if DATA_ROOT.is_dir():
-            data_datasets = {
+            datasets.update({
                 path.name: path
                 for path in sorted(DATA_ROOT.iterdir())
                 if path.is_dir()
-            }
-            datasets.update(data_datasets)
-        if not data_datasets:
+            })
+        if not datasets:
             datasets.update({
                 name: path
                 for name, path in LEGACY_DATA_ROOTS.items()
@@ -208,8 +328,11 @@ class MainWindow(QMainWindow):
         return datasets
 
     def _refresh_data(self) -> None:
-        self.dataset_paths = self._available_datasets()
+        available_datasets = self._available_datasets()
         selected = self.dataset_selector.currentText()
+        selected_folder = self.folder_selector.currentText()
+        dataset_changed = available_datasets != self.dataset_paths
+        self.dataset_paths = available_datasets
         self.dataset_selector.blockSignals(True)
         self.dataset_selector.clear()
         self.dataset_selector.addItems(list(self.dataset_paths))
@@ -223,22 +346,34 @@ class MainWindow(QMainWindow):
             return
         index = self.dataset_selector.findText(selected)
         self.dataset_selector.setCurrentIndex(max(0, index))
-        self._select_dataset(self.dataset_selector.currentIndex())
+        current_dataset = self.dataset_paths.get(self.dataset_selector.currentText())
+        folders_changed = (
+            current_dataset is not None
+            and self._folder_paths_for(current_dataset) != self.folder_paths
+        )
+        if dataset_changed or folders_changed or selected != self.dataset_selector.currentText():
+            self._select_dataset(self.dataset_selector.currentIndex())
+        elif selected_folder in self.folder_paths:
+            self.folder_selector.setCurrentText(selected_folder)
+            folder_path = self.folder_paths[selected_folder]
+            folder_images = sorted(
+                path.name
+                for path in folder_path.iterdir()
+                if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+            )
+            if folder_images != [path.name for path in self.image_paths]:
+                self._select_folder(self.folder_selector.currentIndex())
+        else:
+            self._select_dataset(self.dataset_selector.currentIndex())
 
-    def _select_dataset(self, index: int) -> None:
-        if index < 0:
-            return
-        dataset_path = self.dataset_paths.get(self.dataset_selector.currentText())
-        if dataset_path is None:
-            return
-        selected_folder = self.folder_selector.currentText()
-        self.folder_paths = {}
+    def _folder_paths_for(self, dataset_path: Path) -> dict[str, Path]:
+        folder_paths: dict[str, Path] = {}
         if any(
             child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS
             for child in dataset_path.iterdir()
         ):
-            self.folder_paths["(this folder)"] = dataset_path
-        self.folder_paths.update({
+            folder_paths["(this folder)"] = dataset_path
+        folder_paths.update({
             str(path.relative_to(dataset_path)): path
             for path in sorted(dataset_path.rglob("*"))
             if path.is_dir()
@@ -247,6 +382,16 @@ class MainWindow(QMainWindow):
                 for child in path.iterdir()
             )
         })
+        return folder_paths
+
+    def _select_dataset(self, index: int) -> None:
+        if index < 0:
+            return
+        dataset_path = self.dataset_paths.get(self.dataset_selector.currentText())
+        if dataset_path is None:
+            return
+        selected_folder = self.folder_selector.currentText()
+        self.folder_paths = self._folder_paths_for(dataset_path)
         self.folder_selector.blockSignals(True)
         self.folder_selector.clear()
         self.folder_selector.addItems(list(self.folder_paths))
@@ -295,20 +440,46 @@ class MainWindow(QMainWindow):
             return
         self.canvas.set_image(self.current_image)
         self.status.setText(
-            f"{self.current_path.name}: click at least three points around the ROI."
+            f"{self.current_path.name}: click Create polygon, then click around the ROI."
         )
 
+    def _start_polygon(self) -> None:
+        if self.current_image is None:
+            self.status.setText("Select an image first.")
+            return
+        self.canvas.start_drawing()
+        self.status.setText(
+            "Drawing polygon: click points, click the first point again or press "
+            "Enter to finish. Press Escape to cancel."
+        )
+
+    def _edit_polygon(self) -> None:
+        if not self.canvas.finalized:
+            self.status.setText("Finish a polygon before editing it.")
+            return
+        self.canvas.start_editing()
+        self.status.setText("Edit mode: drag a yellow vertex to adjust the polygon.")
+
+    def _finish_polygon(self) -> None:
+        if self.canvas.finish_polygon():
+            self.status.setText("Polygon finished. Click Analyze ROI to run analysis.")
+        else:
+            self.status.setText("A polygon needs at least three points.")
+
+    def _cancel_polygon(self) -> None:
+        self.canvas.cancel_drawing()
+        self.status.setText("Drawing canceled.")
+
     def _clear_polygon(self) -> None:
-        self.canvas.points.clear()
-        self.canvas.update()
-        self.status.setText("Polygon cleared. Draw the ROI again.")
+        self.canvas.clear_polygon()
+        self.status.setText("Polygon cleared. Click Create polygon to draw again.")
 
     def _analyze(self) -> None:
         if self.current_image is None or self.current_path is None:
             self.status.setText("Select an image first.")
             return
-        if len(self.canvas.points) < 3:
-            self.status.setText("Add at least three polygon points.")
+        if not self.canvas.finalized:
+            self.status.setText("Finish the polygon before analyzing it.")
             return
         points = np.rint(
             [[point.x(), point.y()] for point in self.canvas.points]
@@ -342,7 +513,7 @@ class MainWindow(QMainWindow):
             green,
             corrected_glare,
         )
-        self.canvas.set_image(overlay)
+        self.canvas.set_image(overlay, clear_points=False)
 
     def _save_result(self, row: dict[str, object]) -> None:
         if self.current_path is None:

@@ -9,12 +9,15 @@ These steps are for Windows.
 2. Download this project and open its folder.
 3. Double-click `start_app.bat` (or open PowerShell in this folder and run
    `python desktop_app.py`).
-4. Choose a dataset and an image folder on the left.
-5. Choose an image, then click at least three points around the vegetation
-   region. The yellow line shows your polygon.
-6. Click **Analyze ROI**. The result is saved automatically as
+4. Choose a dataset, image folder, and image on the left.
+5. Click **Create polygon**.
+6. Click around the vegetation region to place points. Click the first point
+   again, or click **Finish polygon**, or press Enter.
+7. If needed, click **Edit polygon** and drag a vertex. Use **Clear polygon**
+   to start again.
+8. Click **Analyze ROI** only after finishing the polygon. The result is saved automatically as
    `roi_results.xlsx` in the same folder as that image.
-7. Repeat for more images. The app checks for newly added folders and images
+9. Repeat for more images. The app checks for newly added folders and images
    automatically; **Refresh folders and images** is also available.
 
 If Python is not installed yet, run these commands once in PowerShell from the
@@ -50,9 +53,13 @@ contains JPG, JPEG, or PNG images. If another dataset folder is added under
 using `ROADSIDE TRANSECT` or `VEGETATION PHOTOS_Illambazar premonsoon 2026`
 are also supported as a transition.
 
-The tracked `images/` folder contains small example images for trying the
-polygon tool. Original field datasets are local and are intentionally not
-stored in Git.
+Original field datasets are local and are intentionally not stored in Git.
+
+The polygon workflow is inspired by the documented LabelMe interaction pattern:
+create a polygon point-by-point, close it by clicking the first point or
+pressing Enter, and edit finished vertices by dragging them. This project does
+not copy LabelMe source code, branding, or assets. See the
+[LabelMe shape-tools documentation](https://labelme.io/docs/shape-tools).
 
 ## What the analysis does
 
