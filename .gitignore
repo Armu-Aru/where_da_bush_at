@@ -6,9 +6,10 @@ __pycache__/
 # Original field datasets are kept locally but are not part of the app repo.
 ROADSIDE TRANSECT/
 VEGETATION PHOTOS_Illambazar premonsoon 2026/
+Data/*
+!Data/.gitkeep
 
 # Generated analysis files.
 results/*
 !results/.gitkeep
 Overlay/
-

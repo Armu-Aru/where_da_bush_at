@@ -1,20 +1,24 @@
 # Green Coverage ROI Desktop App
 
-This Windows desktop app measures green and non-green vegetation inside a
-region selected by the user. It is a practical image-analysis tool, not an ML
-training project.
+## For people who do not code: open the app
 
-## What it does
+These steps are for Windows.
 
-- Opens the images in the `images` folder.
-- Lets you draw an ROI polygon directly on an image.
-- Estimates green and non-green percentages inside that polygon.
-- Applies a conservative correction for small bright leaf reflections.
-- Saves results to an Excel workbook.
+1. Install Python from [python.org](https://www.python.org/downloads/). During
+   installation, tick **Add Python to PATH**.
+2. Download this project and open its folder.
+3. Double-click `start_app.bat` (or open PowerShell in this folder and run
+   `python desktop_app.py`).
+4. Choose a dataset and an image folder on the left.
+5. Choose an image, then click at least three points around the vegetation
+   region. The yellow line shows your polygon.
+6. Click **Analyze ROI**. The result is saved automatically as
+   `roi_results.xlsx` in the same folder as that image.
+7. Repeat for more images. The app checks for newly added folders and images
+   automatically; **Refresh folders and images** is also available.
 
-## Run it
-
-From the project folder in PowerShell:
+If Python is not installed yet, run these commands once in PowerShell from the
+project folder:
 
 ```powershell
 python -m venv .venv
@@ -23,23 +27,63 @@ pip install -r requirements.txt
 python desktop_app.py
 ```
 
-The app opens as a normal desktop window; no browser is required.
+## Organising your data
 
-## Use it
+Put field data under one major folder named `Data`:
 
-1. Put JPG, JPEG, or PNG files in the `images` folder.
-2. Select an image from the left-hand list.
-3. Click at least three points around the ROI.
-4. Click **Analyze ROI**.
-5. Read the percentages in the status message.
-6. Repeat for other images.
-7. Click **Export Excel results** when finished.
+```text
+Data/
+├── roadside transect/
+│   ├── T1/
+│   └── T2/
+└── premonsoon/
+    ├── C1 COMPLETE/
+    │   ├── C1S1/
+    │   └── C1S2/
+    └── T1 COMPLETE/
+        └── T1S1/
+```
 
-Results are stored in `results/roi_results.xlsx`. Re-analyzing an image
-replaces its previous row. No overlay images are saved.
+The app automatically lists every dataset folder and every nested folder that
+contains JPG, JPEG, or PNG images. If another dataset folder is added under
+`Data`, it appears in the app without a code change. Existing installations
+using `ROADSIDE TRANSECT` or `VEGETATION PHOTOS_Illambazar premonsoon 2026`
+are also supported as a transition.
 
-## GitHub
+The tracked `images/` folder contains small example images for trying the
+polygon tool. Original field datasets are local and are intentionally not
+stored in Git.
 
-This repository contains the desktop app, the reusable analysis algorithm,
-requirements, README, and sample input images. Large original field datasets
-and generated outputs are intentionally excluded.
+## What the analysis does
+
+The app estimates green and non-green coverage inside a user-drawn polygon,
+with a conservative correction for small bright leaf reflections. Results are
+written to Excel; re-analysing an image replaces its previous row in that
+folder's workbook.
+
+## Citation and authorship
+
+If you use or adapt this software, please cite it as:
+
+> Armu-Aru. *Green Coverage ROI Desktop App*. 2026. Git repository:
+> https://github.com/Armu-Aru/habitat-sampling
+
+**Authorship and contributions**
+
+- **Armu-Aru** — project author, field-data workflow, application
+  requirements, and repository maintainer.
+- **GitHub Copilot** — software implementation assistance and documentation
+  assistance, recorded in the Git commit trailers.
+- **OpenCV, NumPy, pandas, openpyxl, and PySide6** — third-party software
+  dependencies used by this project; please retain their licenses and cite
+  them when required by your institution.
+
+Please add the names of field-data collectors, scientific supervisors, and
+other contributors to this section before formal publication if they are not
+already represented in the repository history.
+
+## Developer notes
+
+This is a Windows desktop app, not an ML training project. Run it with
+`python desktop_app.py` after installing the dependencies in
+`requirements.txt`.

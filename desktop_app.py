@@ -8,10 +8,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QTimer, Qt
 from PySide6.QtGui import QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
     QLabel,
     QListWidget,
@@ -32,7 +33,12 @@ from run_green_roi_analysis import (
 
 ROOT = Path(__file__).resolve().parent
 IMAGE_DIR = ROOT / "images"
-RESULTS_PATH = ROOT / "results" / "roi_results.xlsx"
+DATA_ROOT = ROOT / "Data"
+LEGACY_DATA_ROOTS = {
+    "roadside transect": ROOT / "ROADSIDE TRANSECT",
+    "premonsoon": ROOT / "VEGETATION PHOTOS_Illambazar premonsoon 2026",
+}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
 class ImageCanvas(QLabel):
@@ -48,6 +54,7 @@ class ImageCanvas(QLabel):
         self.points: list[QPointF] = []
         self.scale = 1.0
         self.offset = QPointF()
+        self.setMouseTracking(True)
 
     def set_image(self, image: np.ndarray) -> None:
         height, width = image.shape[:2]
@@ -107,7 +114,7 @@ class ImageCanvas(QLabel):
         )
         painter.drawPixmap(self.offset, scaled)
         if self.points:
-            pen = QPen(Qt.GlobalColor.blue, 3)
+            pen = QPen(Qt.GlobalColor.yellow, 3)
             painter.setPen(pen)
             display_points = [
                 QPointF(
@@ -120,6 +127,9 @@ class ImageCanvas(QLabel):
                 painter.drawLine(first, second)
             if len(display_points) > 2:
                 painter.drawLine(display_points[-1], display_points[0])
+            painter.setBrush(Qt.GlobalColor.yellow)
+            for point in display_points:
+                painter.drawEllipse(point, 5, 5)
 
 
 class MainWindow(QMainWindow):
@@ -127,19 +137,24 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Green Coverage ROI")
         self.resize(1200, 800)
-        self.image_paths = sorted(
-            path
-            for path in IMAGE_DIR.glob("*")
-            if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png"}
-        )
+        self.dataset_paths: dict[str, Path] = {}
+        self.folder_paths: dict[str, Path] = {}
+        self.image_paths: list[Path] = []
         self.current_image: np.ndarray | None = None
         self.current_path: Path | None = None
+        self.results_path: Path | None = None
 
+        self.dataset_selector = QComboBox()
+        self.dataset_selector.currentIndexChanged.connect(self._select_dataset)
+        self.folder_selector = QComboBox()
+        self.folder_selector.currentIndexChanged.connect(self._select_folder)
         self.image_list = QListWidget()
         self.image_list.addItems([path.name for path in self.image_paths])
         self.image_list.currentRowChanged.connect(self._select_image)
         self.canvas = ImageCanvas()
 
+        self.refresh_button = QPushButton("Refresh folders and images")
+        self.refresh_button.clicked.connect(self._refresh_data)
         self.analyze_button = QPushButton("Analyze ROI")
         self.analyze_button.clicked.connect(self._analyze)
         self.clear_button = QPushButton("Clear polygon")
@@ -150,6 +165,11 @@ class MainWindow(QMainWindow):
         self.status.setWordWrap(True)
 
         controls = QVBoxLayout()
+        controls.addWidget(QLabel("Dataset"))
+        controls.addWidget(self.dataset_selector)
+        controls.addWidget(QLabel("Image folder"))
+        controls.addWidget(self.folder_selector)
+        controls.addWidget(self.refresh_button)
         controls.addWidget(QLabel("Images"))
         controls.addWidget(self.image_list)
         controls.addWidget(self.analyze_button)
@@ -164,15 +184,111 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
-        if self.image_paths:
-            self.image_list.setCurrentRow(0)
+        self._refresh_data()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._refresh_data)
+        self._refresh_timer.start(2000)
+
+    def _available_datasets(self) -> dict[str, Path]:
+        datasets = {"Example images": IMAGE_DIR} if IMAGE_DIR.is_dir() else {}
+        data_datasets: dict[str, Path] = {}
+        if DATA_ROOT.is_dir():
+            data_datasets = {
+                path.name: path
+                for path in sorted(DATA_ROOT.iterdir())
+                if path.is_dir()
+            }
+            datasets.update(data_datasets)
+        if not data_datasets:
+            datasets.update({
+                name: path
+                for name, path in LEGACY_DATA_ROOTS.items()
+                if path.is_dir()
+            })
+        return datasets
+
+    def _refresh_data(self) -> None:
+        self.dataset_paths = self._available_datasets()
+        selected = self.dataset_selector.currentText()
+        self.dataset_selector.blockSignals(True)
+        self.dataset_selector.clear()
+        self.dataset_selector.addItems(list(self.dataset_paths))
+        self.dataset_selector.blockSignals(False)
+        if not self.dataset_paths:
+            self.folder_selector.clear()
+            self.image_list.clear()
+            self.status.setText(
+                f"No datasets found. Add folders inside {DATA_ROOT} and refresh."
+            )
+            return
+        index = self.dataset_selector.findText(selected)
+        self.dataset_selector.setCurrentIndex(max(0, index))
+        self._select_dataset(self.dataset_selector.currentIndex())
+
+    def _select_dataset(self, index: int) -> None:
+        if index < 0:
+            return
+        dataset_path = self.dataset_paths.get(self.dataset_selector.currentText())
+        if dataset_path is None:
+            return
+        selected_folder = self.folder_selector.currentText()
+        self.folder_paths = {}
+        if any(
+            child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS
+            for child in dataset_path.iterdir()
+        ):
+            self.folder_paths["(this folder)"] = dataset_path
+        self.folder_paths.update({
+            str(path.relative_to(dataset_path)): path
+            for path in sorted(dataset_path.rglob("*"))
+            if path.is_dir()
+            and any(
+                child.is_file() and child.suffix.lower() in IMAGE_EXTENSIONS
+                for child in path.iterdir()
+            )
+        })
+        self.folder_selector.blockSignals(True)
+        self.folder_selector.clear()
+        self.folder_selector.addItems(list(self.folder_paths))
+        self.folder_selector.blockSignals(False)
+        if self.folder_paths:
+            folder_index = self.folder_selector.findText(selected_folder)
+            self.folder_selector.setCurrentIndex(max(0, folder_index))
+            self._select_folder(self.folder_selector.currentIndex())
         else:
-            self.status.setText(f"No images found in {IMAGE_DIR}")
+            self.image_list.clear()
+            self.status.setText(f"No images found inside {dataset_path}")
+
+    def _select_folder(self, index: int) -> None:
+        if index < 0:
+            return
+        folder_path = self.folder_paths.get(self.folder_selector.currentText())
+        if folder_path is None:
+            return
+        selected_image = self.image_list.currentItem().text() if self.image_list.currentItem() else ""
+        self.image_paths = sorted(
+            path
+            for path in folder_path.iterdir()
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+        )
+        self.image_list.blockSignals(True)
+        self.image_list.clear()
+        self.image_list.addItems([path.name for path in self.image_paths])
+        self.image_list.blockSignals(False)
+        if self.image_paths:
+            image_index = next(
+                (i for i, path in enumerate(self.image_paths) if path.name == selected_image),
+                0,
+            )
+            self.image_list.setCurrentRow(image_index)
+        else:
+            self.status.setText(f"No images found in {folder_path}")
 
     def _select_image(self, index: int) -> None:
         if index < 0 or index >= len(self.image_paths):
             return
         self.current_path = self.image_paths[index]
+        self.results_path = self.current_path.parent / "roi_results.xlsx"
         self.current_image = cv2.imread(str(self.current_path), cv2.IMREAD_COLOR)
         if self.current_image is None:
             self.status.setText(f"Unable to read {self.current_path}")
@@ -229,17 +345,23 @@ class MainWindow(QMainWindow):
         self.canvas.set_image(overlay)
 
     def _save_result(self, row: dict[str, object]) -> None:
-        RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if RESULTS_PATH.is_file():
-            results = pd.read_excel(RESULTS_PATH)
-            results = results[results["image"] != row["image"]]
+        if self.current_path is None:
+            return
+        self.results_path = self.current_path.parent / "roi_results.xlsx"
+        self.results_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.results_path.is_file():
+            results = pd.read_excel(self.results_path)
+            if "image" not in results.columns:
+                results = pd.DataFrame()
+            else:
+                results = results[results["image"] != row["image"]]
             results = pd.concat([results, pd.DataFrame([row])], ignore_index=True)
         else:
             results = pd.DataFrame([row])
-        results.to_excel(RESULTS_PATH, index=False)
+        results.to_excel(self.results_path, index=False)
 
     def _export_results(self) -> None:
-        if not RESULTS_PATH.is_file():
+        if self.results_path is None or not self.results_path.is_file():
             QMessageBox.information(self, "No results", "Analyze an image first.")
             return
         destination, _ = QFileDialog.getSaveFileName(
@@ -249,7 +371,7 @@ class MainWindow(QMainWindow):
             "Excel workbook (*.xlsx)",
         )
         if destination:
-            Path(destination).write_bytes(RESULTS_PATH.read_bytes())
+            Path(destination).write_bytes(self.results_path.read_bytes())
             self.status.setText(f"Exported results to {destination}")
 
 
