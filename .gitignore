@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.streamlit/
+
+# Original field datasets are kept locally but are not part of the app repo.
+ROADSIDE TRANSECT/
+VEGETATION PHOTOS_Illambazar premonsoon 2026/
+
+# Generated analysis files.
+results/*
+!results/.gitkeep
+Overlay/
+
